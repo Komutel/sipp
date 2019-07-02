@@ -65,6 +65,7 @@ message::message(int index, const char *desc)
     repeat_rtd = 0;
     lost = -1;
     crlf = 0;
+    ignoresdp = false;
     hide = 0;
     display_str = NULL; // free on exit
     test = -1;
@@ -154,7 +155,7 @@ long get_long(const char *ptr, const char *what)
 
     ret = strtol(ptr, &endptr, 0);
     if (*endptr) {
-        ERROR("%s, \"%s\" is not a valid integer!\n", what, ptr);
+        ERROR("%s, \"%s\" is not a valid integer!", what, ptr);
     }
     return ret;
 }
@@ -166,7 +167,7 @@ unsigned long long get_long_long(const char *ptr, const char *what)
 
     ret = strtoull(ptr, &endptr, 0);
     if (*endptr) {
-        ERROR("%s, \"%s\" is not a valid integer!\n", what, ptr);
+        ERROR("%s, \"%s\" is not a valid integer!", what, ptr);
     }
     return ret;
 }
@@ -179,12 +180,12 @@ long get_time(const char *ptr, const char *what, int multiplier)
 {
     char *endptr;
     const char *p;
-    long ret;
+    long ret = 0;
     double dret;
     int i;
 
     if (!isdigit(*ptr)) {
-        ERROR("%s, \"%s\" is not a valid time!\n", what, ptr);
+        ERROR("%s, \"%s\" is not a valid time!", what, ptr);
     }
 
     for (i = 0, p = ptr; *p; p++) {
@@ -194,11 +195,11 @@ long get_time(const char *ptr, const char *what, int multiplier)
     }
 
     if (i == 1) { /* mm:ss */
-        ERROR("%s, \"%s\" mm:ss not implemented yet!\n", what, ptr);
+        ERROR("%s, \"%s\" mm:ss not implemented yet!", what, ptr);
     } else if (i == 2) { /* hh:mm:ss */
-        ERROR("%s, \"%s\" hh:mm:ss not implemented yet!\n", what, ptr);
+        ERROR("%s, \"%s\" hh:mm:ss not implemented yet!", what, ptr);
     } else if (i != 0) {
-        ERROR("%s, \"%s\" is not a valid time!\n", what, ptr);
+        ERROR("%s, \"%s\" is not a valid time!", what, ptr);
     }
 
     dret = strtod(ptr, &endptr);
@@ -212,7 +213,7 @@ long get_time(const char *ptr, const char *what, int multiplier)
         } else if (!strcmp(endptr, "h")) { /* Hours. */
             ret = (long)(dret * 60 * 60 * 1000);
         } else {
-            ERROR("%s, \"%s\" is not a valid time!\n", what, ptr);
+            ERROR("%s, \"%s\" is not a valid time!", what, ptr);
         }
     } else {
         ret = (long)(dret * multiplier);
@@ -227,12 +228,12 @@ double get_double(const char *ptr, const char *what)
 
     ret = strtod(ptr, &endptr);
     if (*endptr) {
-        ERROR("%s, \"%s\" is not a floating point number!\n", what, ptr);
+        ERROR("%s, \"%s\" is not a floating point number!", what, ptr);
     }
     return ret;
 }
 
-#ifdef PCAPPLAY
+#if defined(PCAPPLAY) || defined(RTP_STREAM)
 /* If the value is enclosed in [brackets], it is assumed to be
  * a command-line supplied keyword value (-key). */
 static char* xp_get_keyword_value(const char *name)
@@ -251,7 +252,7 @@ static char* xp_get_keyword_value(const char *name)
             }
             ++i;
         }
-        ERROR("%s \"%s\" looks like a keyword value, but keyword not supplied!\n", name, ptr);
+        ERROR("%s \"%s\" looks like a keyword value, but keyword not supplied!", name, ptr);
     }
 
     return ptr ? strdup(ptr) : NULL;
@@ -341,10 +342,10 @@ int scenario::get_txn(const char *txnName, const char *what, bool start, bool is
 {
     /* Check the name's validity. */
     if (txnName[0] == '\0') {
-        ERROR("Variable names may not be empty for %s\n", what);
+        ERROR("Variable names may not be empty for %s", what);
     }
     if (strcspn(txnName, "$,") != strlen(txnName)) {
-        ERROR("Variable names may not contain $ or , for %s\n", what);
+        ERROR("Variable names may not contain $ or , for %s", what);
     }
 
     /* If this transaction has already been used, then we have nothing to do. */
@@ -399,10 +400,10 @@ int scenario::get_var(const char *varName, const char *what)
 {
     /* Check the name's validity. */
     if (varName[0] == '\0') {
-        ERROR("Transaction names may not be empty for %s\n", what);
+        ERROR("Transaction names may not be empty for %s", what);
     }
     if (strcspn(varName, "$,") != strlen(varName)) {
-        ERROR("Transaction names may not contain $ or , for %s\n", what);
+        ERROR("Transaction names may not contain '$' or ',' for %s", what);
     }
 
     return allocVars->find(varName, true);
@@ -466,7 +467,7 @@ bool get_bool(const char *ptr, const char *what)
 
     ret = strtol(ptr, &endptr, 0);
     if (*endptr) {
-        ERROR("%s, \"%s\" is not a valid boolean!\n", what, ptr);
+        ERROR("%s, \"%s\" is not a valid boolean!", what, ptr);
     }
     return ret ? true : false;
 }
@@ -523,10 +524,10 @@ int scenario::get_counter(const char *ptr, const char *what)
 {
     /* Check the name's validity. */
     if (ptr[0] == '\0') {
-        ERROR("Counter names names may not be empty for %s\n", what);
+        ERROR("Counter names names may not be empty for %s", what);
     }
     if (strcspn(ptr, "$,") != strlen(ptr)) {
-        ERROR("Counter names may not contain $ or , for %s\n", what);
+        ERROR("Counter names may not contain $ or , for %s", what);
     }
 
     return stats->findCounter(ptr, true);
@@ -544,15 +545,15 @@ void scenario::validate_txn_usage()
 {
     for (unsigned int i = 0; i < transactions.size(); i++) {
         if(transactions[i].started == 0) {
-            ERROR("Transaction %s is never started!\n", transactions[i].name);
+            ERROR("Transaction %s is never started!", transactions[i].name);
         } else if(transactions[i].responses == 0) {
-            ERROR("Transaction %s has no responses defined!\n", transactions[i].name);
+            ERROR("Transaction %s has no responses defined!", transactions[i].name);
         }
         if (transactions[i].isInvite && transactions[i].acks == 0) {
-            ERROR("Transaction %s is an INVITE transaction without an ACK!\n", transactions[i].name);
+            ERROR("Transaction %s is an INVITE transaction without an ACK!", transactions[i].name);
         }
         if (!transactions[i].isInvite && (transactions[i].acks > 0)) {
-            ERROR("Transaction %s is a non-INVITE transaction with an ACK!\n", transactions[i].name);
+            ERROR("Transaction %s is a non-INVITE transaction with an ACK!", transactions[i].name);
         }
     }
 }
@@ -564,14 +565,14 @@ void scenario::apply_labels(msgvec v, str_int_map labels)
         if (v[i]->nextLabel) {
             str_int_map::iterator label_it = labels.find(v[i]->nextLabel);
             if (label_it == labels.end()) {
-                ERROR("The label '%s' was not defined (index %d, next attribute)\n", v[i]->nextLabel, i);
+                ERROR("The label '%s' was not defined (index %d, next attribute)", v[i]->nextLabel, i);
             }
             v[i]->next = label_it->second;
         }
         if (v[i]->onTimeoutLabel) {
             str_int_map::iterator label_it = labels.find(v[i]->onTimeoutLabel);
             if (label_it == labels.end()) {
-                ERROR("The label '%s' was not defined (index %d, ontimeout attribute)\n", v[i]->onTimeoutLabel, i);
+                ERROR("The label '%s' was not defined (index %d, ontimeout attribute)", v[i]->onTimeoutLabel, i);
             }
             v[i]->on_timeout = label_it->second;
         }
@@ -601,7 +602,7 @@ static char* clean_cdata(char *ptr, int *removed_crlf = NULL)
     strcpy(msg, ptr);
 
     ptr = msg + strlen(msg);
-    ptr --;
+    ptr--;
 
     while((ptr >= msg) &&
             ((*ptr == ' ')  ||
@@ -611,10 +612,6 @@ static char* clean_cdata(char *ptr, int *removed_crlf = NULL)
             (*removed_crlf)++;
         }
         *ptr-- = 0;
-    }
-
-    if(!strstr(msg, "\n\n")) {
-        strcat(msg, "\n\n");
     }
 
     if(ptr == msg) {
@@ -631,6 +628,10 @@ static char* clean_cdata(char *ptr, int *removed_crlf = NULL)
     }
     while ((ptr = strstr(msg, "\t\n"))) {
         memmove(ptr, ptr + 1, strlen(ptr));
+    }
+
+    if (!strstr(msg, "\n\n")) {
+        strcat(msg, "\n\n");
     }
 
     return msg;
@@ -785,7 +786,7 @@ scenario::scenario(char * filename, int deflt)
             }
         } else { /** Message Case */
             if (found_timewait) {
-                ERROR("<timewait> can only be the last message in a scenario!\n");
+                ERROR("<timewait> can only be the last message in a scenario!");
             }
             message *curmsg = new message(messages.size(), name ? name : "unknown scenario");
             messages.push_back(curmsg);
@@ -887,7 +888,7 @@ scenario::scenario(char * filename, int deflt)
                 last_recv_optional = curmsg->optional;
                 curmsg->advance_state = xp_get_bool("advance_state", "recv", true);
                 if (!curmsg->advance_state && curmsg->optional == OPTIONAL_FALSE) {
-                    ERROR("advance_state is allowed only for optional messages (index = %zu)\n", messages.size() - 1);
+                    ERROR("advance_state is allowed only for optional messages (index = %zu)", messages.size() - 1);
                 }
 
                 if ((cptr = xp_get_value("regexp_match"))) {
@@ -999,6 +1000,12 @@ scenario::scenario(char * filename, int deflt)
 
     free(method_list);
 
+    /* Close scenario element */
+    xp_close_element();
+    if (xp_is_invalid()) {
+        ERROR("Invalid XML in scenario");
+    }
+
     str_int_map::iterator label_it = labelMap.find("_unexp.main");
     if (label_it != labelMap.end()) {
         unexpected_jump = label_it->second;
@@ -1081,7 +1088,7 @@ scenario::~scenario()
 
 CSample *parse_distribution(bool oldstyle = false)
 {
-    CSample *distribution;
+    CSample *distribution = nullptr;
     const char *distname;
     const char *ptr = 0;
 
@@ -1161,10 +1168,10 @@ CSample *parse_distribution(bool oldstyle = false)
                || !strcmp(distname, "gamma")
                || !strcmp(distname, "negbin")
                || !strcmp(distname, "weibull")) {
-        ERROR("The distribution '%s' is only available with GSL.", distname);
+        ERROR("The distribution '%s' is only available with GSL", distname);
 #endif
     } else {
-        ERROR("Unknown distribution: %s\n", ptr);
+        ERROR("Unknown distribution: %s", ptr);
     }
 
     return distribution;
@@ -1198,12 +1205,12 @@ void parse_slave_cfg()
 
             peer_host = strdup(temp_host);
             if (!peer_host)
-                ERROR("Cannot allocate memory!\n");
+                ERROR("Cannot allocate memory!");
 
             peer_addrs[std::string(temp_peer)] = peer_host;
         }
     } else {
-        ERROR("Can not open slave_cfg file %s\n", slave_cfg_file);
+        ERROR("Can not open slave_cfg file %s", slave_cfg_file);
     }
 
     fclose(f);
@@ -1269,11 +1276,11 @@ void scenario::computeSippMode()
                     }
                 }
                 if((thirdPartyMode == MODE_MASTER_PASSIVE || thirdPartyMode == MODE_MASTER) && !master_name) {
-                    ERROR("Inconsistency between command line and scenario: master scenario but -master option not set\n");
+                    ERROR("Inconsistency between command line and scenario: master scenario but -master option not set");
                 }
                 if(!twinSippMode && !extendedTwinSippMode)
                     ERROR("sendCmd message found in scenario but no twin sipp"
-                          " address has been passed! Use -3pcc option or 3pcc extended mode.\n");
+                          " address has been passed! Use -3pcc option or 3pcc extended mode");
             }
             break;
 
@@ -1288,7 +1295,7 @@ void scenario::computeSippMode()
                 } else if(extendedTwinSippMode) {
                     thirdPartyMode = MODE_SLAVE;
                     if(!slave_number) {
-                        ERROR("Inconsistency between command line and scenario: slave scenario but -slave option not set\n");
+                        ERROR("Inconsistency between command line and scenario: slave scenario but -slave option not set");
                     } else {
                         thirdPartyMode = MODE_SLAVE;
                     }
@@ -1304,9 +1311,9 @@ void scenario::computeSippMode()
         }
     }
     if(creationMode == -1)
-        ERROR("Unable to determine creation mode of the tool (server, client)\n");
+        ERROR("Unable to determine creation mode of the tool (server, client)");
     if(sendMode == -1)
-        ERROR("Unable to determine send mode of the tool (server, client)\n");
+        ERROR("Unable to determine send mode of the tool (server, client)");
 }
 
 void scenario::handle_rhs(CAction *tmpAction, const char *what)
@@ -1656,22 +1663,24 @@ void scenario::parseAction(CActions *actions)
             } else if (xp_get_value("play_dtmf")) {
                 ERROR("Scenario specifies a play_dtmf action, but this version of SIPp does not have PCAP support");
 #endif
-            } else if ((cptr = xp_get_value("rtp_stream"))) {
 #ifdef RTP_STREAM
+            } else if ((ptr = xp_get_keyword_value("rtp_stream"))) {
                 hasMedia = 1;
-                if (strcmp(cptr, "pause") == 0) {
+                if (strcmp(ptr, "pause") == 0) {
                     tmpAction->setActionType(CAction::E_AT_RTP_STREAM_PAUSE);
-                } else if (strcmp(cptr, "resume") == 0) {
+                } else if (strcmp(ptr, "resume") == 0) {
                     tmpAction->setActionType(CAction::E_AT_RTP_STREAM_RESUME);
                 } else {
-                    tmpAction->setRTPStreamActInfo(cptr);
+                    tmpAction->setRTPStreamActInfo(ptr);
                     tmpAction->setActionType(CAction::E_AT_RTP_STREAM_PLAY);
                 }
+                free(ptr);
 #else
+            } else if ((cptr = xp_get_value("rtp_stream"))) {
                 ERROR("Scenario specifies a rtp_stream action, but this version of SIPp does not have RTP stream support");
 #endif
             } else {
-                ERROR("illegal <exec> in the scenario\n");
+                ERROR("illegal <exec> in the scenario");
             }
         } else if(!strcmp(actionElem, "rtp_echo")) {
 #ifdef RTP_STREAM
@@ -1699,15 +1708,16 @@ void scenario::getActionForThisMessage(message *message)
 {
     char *        actionElem;
 
-    if(!(actionElem = xp_open_element(0))) {
+    if (!(actionElem = xp_open_element(0))) {
         return;
     }
-    if(strcmp(actionElem, "action")) {
+    if (strcmp(actionElem, "action")) {
+        xp_close_element();
         return;
     }
 
     /* We actually have an action element. */
-    if(message->M_actions != NULL) {
+    if (message->M_actions != NULL) {
         ERROR("Duplicate action for %s index %d", message->desc, message->index);
     }
     message->M_actions = new CActions();
@@ -1754,6 +1764,10 @@ void scenario::getCommonAttributes(message *message)
 
     if ((ptr = xp_get_value("crlf"))) {
         message -> crlf = 1;
+    }
+
+    if ((ptr = xp_get_value("ignoresdp"))) {
+        message->ignoresdp = get_bool(ptr, "ignoresdp");
     }
 
     if (xp_get_value("hiderest")) {
@@ -1945,7 +1959,7 @@ int find_scenario(const char *scenario)
         }
     }
 
-    ERROR("Invalid default scenario name '%s'.\n", scenario);
+    ERROR("Invalid default scenario name '%s'", scenario);
     return -1;
 }
 
@@ -2099,6 +2113,9 @@ const char * default_scenario [] = {
     "  <!-- By adding rrs=\"true\" (Record Route Sets), the route sets         -->\n"
     "  <!-- are saved and used for following messages sent. Useful to test   -->\n"
     "  <!-- against stateful SIP proxies/B2BUAs.                             -->\n"
+    "  <!-- Adding ignoresdp=\"true\" here would ignore the SDP data: that     -->\n"
+    "  <!-- can be useful if you want to reject reINVITEs and keep the       -->\n"
+    "  <!-- media stream flowing.                                            -->\n"
     "  <recv request=\"INVITE\" crlf=\"true\">\n"
     "  </recv>\n"
     "\n"

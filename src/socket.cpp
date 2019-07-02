@@ -35,9 +35,15 @@
  *           Michael Hirschbichler
  */
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE /* needed for strcasestr on cygwin */
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
+
 #include "sipp.hpp"
 #include "socket.hpp"
 #include "logger.hpp"
@@ -540,7 +546,7 @@ void setup_ctrl_socket()
 
     ctrl_socket = new SIPpSocket(0, T_UDP, sock, 0);
     if (!ctrl_socket) {
-        ERROR_NO("Could not setup control socket!\n");
+        ERROR_NO("Could not setup control socket!");
     }
 }
 
@@ -558,7 +564,7 @@ void setup_stdin_socket()
 
     stdin_socket = new SIPpSocket(0, T_TCP, stdin_fileno, 0);
     if (!stdin_socket) {
-        ERROR_NO("Could not setup keyboard (stdin) socket!\n");
+        ERROR_NO("Could not setup keyboard (stdin) socket!");
     }
 }
 
@@ -587,7 +593,7 @@ void handle_stdin_socket()
                 printf(SIPP_ENDL);
             }
 #ifndef __SUNOS
-            else if (c == KEY_BACKSPACE || c == KEY_DC)
+            else if (c == key_backspace || c == key_dc)
 #else
             else if (c == 14)
 #endif
@@ -751,15 +757,21 @@ int SIPpSocket::check_for_message()
         return 0;
     }
 
+    char saved = socketbuf->buf[socketbuf->offset + len];
+    socketbuf->buf[socketbuf->offset + len] = '\0';
+
     /* Find the content-length header. */
-    if ((l = strncasestr(socketbuf->buf + socketbuf->offset, "\r\nContent-Length:", len))) {
+    if ((l = strcasestr(socketbuf->buf + socketbuf->offset, "\r\nContent-Length:"))) {
         l += strlen("\r\nContent-Length:");
-    } else if ((l = strncasestr(socketbuf->buf + socketbuf->offset, "\r\nl:", len))) {
+    } else if ((l = strcasestr(socketbuf->buf + socketbuf->offset, "\r\nl:"))) {
         l += strlen("\r\nl:");
-    } else {
-        /* There is no header, so the content-length is zero. */
-        return len + 1;
     }
+
+    socketbuf->buf[socketbuf->offset + len] = saved;
+
+    /* There is no header, so the content-length is zero. */
+    if (!l)
+        return len + 1;
 
     /* Skip spaces. */
     while (isspace(*l)) {
@@ -942,6 +954,8 @@ void SIPpSocket::invalidate()
             WARNING_NO("Failed to delete FD from epoll");
         }
 #endif
+    }
+    if (ss_fd != -1 && ss_fd != stdin_fileno) {
         if (ss_transport != T_UDP) {
             if (shutdown(ss_fd, SHUT_RDWR) < 0) {
                 WARNING_NO("Failed to shutdown socket %d", ss_fd);
@@ -957,18 +971,16 @@ void SIPpSocket::invalidate()
         }
 #endif
 
-        if (ss_fd == stdin_fileno) {
-            /* don't close stdin, breaks interactive terminals */
-        } else if (::close(ss_fd) < 0) {
+        if (::close(ss_fd) < 0) {
             WARNING_NO("Failed to close socket %d", ss_fd);
         }
-        ss_fd = -1;
     }
 
     if ((pollidx = ss_pollidx) >= pollnfds) {
         ERROR("Pollset error: index %d is greater than number of fds %d!", pollidx, pollnfds);
     }
 
+    ss_fd = -1;
     ss_invalid = true;
     ss_pollidx = -1;
 
@@ -1256,6 +1268,7 @@ SIPpSocket::SIPpSocket(bool use_ipv6, int transport, int fd, int accepting):
     ss_invalid(false),
     ss_in(NULL),
     ss_out(NULL),
+    ss_out_tail(NULL),
     ss_msglen(0)
 {
     /* Initialize all sockets with our destination address. */
@@ -1266,11 +1279,11 @@ SIPpSocket::SIPpSocket(bool use_ipv6, int transport, int fd, int accepting):
 
     if (transport == T_TLS) {
         if ((ss_bio = BIO_new_socket(fd, BIO_NOCLOSE)) == NULL) {
-            ERROR("Unable to create BIO object:Problem with BIO_new_socket()\n");
+            ERROR("Unable to create BIO object:Problem with BIO_new_socket()");
         }
 
         if (!(ss_ssl = (accepting ? SSL_new_server() : SSL_new_client()))) {
-            ERROR("Unable to create SSL object : Problem with SSL_new() \n");
+            ERROR("Unable to create SSL object : Problem with SSL_new()");
         }
 
         SSL_set_bio(ss_ssl, ss_bio, ss_bio);
@@ -1316,7 +1329,7 @@ static int socket_fd(bool use_ipv6, int transport)
         break;
     case T_SCTP:
 #ifndef USE_SCTP
-        ERROR("You do not have SCTP support enabled!\n");
+        ERROR("You do not have SCTP support enabled!");
 #else
         socket_type = SOCK_STREAM;
         protocol = IPPROTO_SCTP;
@@ -1324,7 +1337,7 @@ static int socket_fd(bool use_ipv6, int transport)
         break;
     case T_TLS:
 #ifndef USE_OPENSSL
-        ERROR("You do not have TLS support enabled!\n");
+        ERROR("You do not have TLS support enabled!");
 #endif
     case T_TCP:
         socket_type = SOCK_STREAM;
@@ -1442,7 +1455,7 @@ SIPpSocket* SIPpSocket::accept() {
                 sipp_usleep(SIPP_SSL_RETRY_TIMEOUT);
                 continue;
             }
-            ERROR("Error in SSL_accept: %s\n",
+            ERROR("Error in SSL_accept: %s",
                   SSL_error_string(err, rc));
             break;
         }
@@ -1573,8 +1586,9 @@ int SIPpSocket::connect(struct sockaddr_storage* dest)
                 sipp_usleep(SIPP_SSL_RETRY_TIMEOUT);
                 continue;
             }
-            ERROR("Error in SSL connection: %s\n", SSL_error_string(err, rc));
-            break;
+            WARNING("Error in SSL connection: %s", SSL_error_string(err, rc));
+            invalidate();
+            return err;
         }
 #else
         ERROR("You need to compile SIPp with TLS support");
@@ -1610,11 +1624,11 @@ int SIPpSocket::reconnect()
 
         if (transport == T_TLS) {
             if ((ss_bio = BIO_new_socket(ss_fd, BIO_NOCLOSE)) == NULL) {
-                ERROR("Unable to create BIO object:Problem with BIO_new_socket()\n");
+                ERROR("Unable to create BIO object:Problem with BIO_new_socket()");
             }
 
             if (!(ss_ssl = SSL_new_client())) {
-                ERROR("Unable to create SSL object : Problem with SSL_new() \n");
+                ERROR("Unable to create SSL object : Problem with SSL_new()");
             }
 
             SSL_set_bio(ss_ssl, ss_bio, ss_bio);
@@ -1655,13 +1669,13 @@ struct socketbuf *alloc_socketbuf(char *buffer, size_t size, int copy, struct so
 
     socketbuf = (struct socketbuf *)malloc(sizeof(struct socketbuf));
     if (!socketbuf) {
-        ERROR("Could not allocate socket buffer!\n");
+        ERROR("Could not allocate socket buffer!");
     }
     memset(socketbuf, 0, sizeof(struct socketbuf));
     if (copy) {
         socketbuf->buf = (char *)malloc(size);
         if (!socketbuf->buf) {
-            ERROR("Could not allocate socket buffer data!\n");
+            ERROR("Could not allocate socket buffer data!");
         }
         memcpy(socketbuf->buf, buffer, size);
     } else {
@@ -1974,15 +1988,13 @@ void SIPpSocket::buffer_write(const char *buffer, size_t len, struct sockaddr_st
 
     if (!buf) {
         ss_out = alloc_socketbuf(const_cast<char*>(buffer), len, DO_COPY, dest); /* NO BUG BECAUSE OF DO_COPY */
+        ss_out_tail = ss_out;
         TRACE_MSG("Added first buffered message to socket %d\n", ss_fd);
         return;
     }
 
-    while (buf->next) {
-        buf = buf->next;
-    }
-
-    buf->next = alloc_socketbuf(const_cast<char*>(buffer), len, DO_COPY, dest); /* NO BUG BECAUSE OF DO_COPY */
+    ss_out_tail->next = alloc_socketbuf(const_cast<char*>(buffer), len, DO_COPY, dest); /* NO BUG BECAUSE OF DO_COPY */
+    ss_out_tail = ss_out_tail->next;
     TRACE_MSG("Appended buffered message to socket %d\n", ss_fd);
 }
 
@@ -2098,7 +2110,7 @@ ssize_t SIPpSocket::write_primitive(const char* buffer, size_t len,
 
     /* Refuse to write to invalid sockets. */
     if (ss_invalid) {
-        WARNING("Returning EPIPE on invalid socket: %p (%d)\n", _RCAST(void*, this), ss_fd);
+        WARNING("Returning EPIPE on invalid socket: %p (%d)", _RCAST(void*, this), ss_fd);
         errno = EPIPE;
         return -1;
     }
@@ -2157,7 +2169,7 @@ ssize_t SIPpSocket::write_primitive(const char* buffer, size_t len,
         break;
 
     default:
-        ERROR("Internal error, unknown transport type %d\n", ss_transport);
+        ERROR("Internal error, unknown transport type %d", ss_transport);
     }
 
     return rc;
@@ -2567,7 +2579,7 @@ int open_connections()
 
         if (tcp_multiplex->connect(&remote_sockaddr)) {
             if (reset_number > 0) {
-                WARNING("Failed to reconnect\n");
+                WARNING("Failed to reconnect");
                 main_socket->close();
                 main_socket = NULL;
                 reset_number--;
@@ -2671,7 +2683,7 @@ SIPpSocket **get_peer_socket(char * peer) {
     if (peer_it != peers.end()) {
         return &peer_it->second.peer_socket;
     } else {
-        ERROR("get_peer_socket: Peer %s not found\n", peer);
+        ERROR("get_peer_socket: Peer %s not found", peer);
     }
     return NULL;
 }
@@ -2685,7 +2697,7 @@ char * get_peer_addr(char * peer)
         addr =  peer_addr_it->second;
         return addr;
     } else {
-        ERROR("get_peer_addr: Peer %s not found\n", peer);
+        ERROR("get_peer_addr: Peer %s not found", peer);
     }
     return NULL;
 }
@@ -2900,7 +2912,7 @@ void SIPpSocket::pollset_process(int wait)
             if ((transport == T_TCP || transport == T_TLS || transport == T_SCTP) && sock == main_socket) {
                 SIPpSocket *new_sock = sock->accept();
                 if (!new_sock) {
-                    ERROR_NO("Accepting new TCP connection.\n");
+                    ERROR_NO("Accepting new TCP connection");
                 }
             } else if (sock == ctrl_socket) {
                 handle_ctrl_socket();
@@ -2910,7 +2922,7 @@ void SIPpSocket::pollset_process(int wait)
                 if (thirdPartyMode == MODE_3PCC_CONTROLLER_B) {
                     twinSippSocket = sock->accept();
                     if (!twinSippMode) {
-                        ERROR_NO("Accepting new TCP connection on Twin SIPp Socket.\n");
+                        ERROR_NO("Accepting new TCP connection on Twin SIPp Socket");
                     }
                     twinSippSocket->ss_control = 1;
                 } else {
@@ -2918,7 +2930,7 @@ void SIPpSocket::pollset_process(int wait)
                        which will be used for reading the infos sent by this remote
                        twin sipp instance (slave or master) */
                     if (local_nb == MAX_LOCAL_TWIN_SOCKETS) {
-                        ERROR("Max number of twin instances reached\n");
+                        ERROR("Max number of twin instances reached");
                     }
 
                     SIPpSocket *localSocket = sock->accept();

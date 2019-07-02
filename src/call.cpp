@@ -45,13 +45,16 @@
 #include <iterator>
 #include <sstream>
 #include <vector>
+
+#include <assert.h>
+#include <stdarg.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <assert.h>
 
 #ifdef PCAPPLAY
 #include "send_packets.h"
 #endif
+
 #include "sipp.hpp"
 #include "auth.hpp"
 #include "deadcall.hpp"
@@ -159,6 +162,7 @@ unsigned int call::wake()
     return wake;
 }
 
+#if defined(PCAPPLAY) || defined(RTP_STREAM) || defined(GTEST)
 static std::string find_in_sdp(std::string const &pattern, std::string const &msg)
 {
     std::string::size_type begin, end;
@@ -176,6 +180,7 @@ static std::string find_in_sdp(std::string const &pattern, std::string const &ms
 
     return msg.substr(begin, end - begin);
 }
+#endif
 
 #ifdef PCAPPLAY
 void call::get_remote_media_addr(std::string const &msg)
@@ -297,7 +302,7 @@ unsigned long call::hash(const char * msg)
             }
         }
     } else {
-        ERROR("Internal error: Invalid rtcheck %d\n", rtcheck);
+        ERROR("Internal error: Invalid rtcheck %d", rtcheck);
     }
 
     return hash;
@@ -992,7 +997,7 @@ char * call::get_last_request_uri()
     }
 
     if (!(last_request_uri = (char *)malloc(tmp_len + 1))) {
-        ERROR("Cannot allocate !\n");
+        ERROR("Cannot allocate!");
     }
 
     last_request_uri[0] = '\0';
@@ -1011,8 +1016,6 @@ char * call::send_scene(int index, int *send_status, int *len)
     char *L_ptr1 ;
     char *L_ptr2 ;
     int uselen = 0;
-    int tmplen;
-    char *hdrbdry;
 
     assert(send_status);
 
@@ -1052,16 +1055,6 @@ char * call::send_scene(int index, int *send_status, int *len)
         ack_is_pending = false ;
     }
 
-    /* Fix: Remove extra "\r\n" if message body ends with "\r\n\r\n" */
-    tmplen = (*len) - 1;
-    if ((dest[tmplen] == dest[tmplen-2] && dest[tmplen] == '\n')
-            && (dest[tmplen-1] == dest[tmplen-3] && dest[tmplen-1] == '\r'))  {
-        hdrbdry = strstr(dest, "\r\n\r\n");
-        if (NULL != hdrbdry &&  hdrbdry != dest+(tmplen-3))  {
-            *len = (*len) - 2;
-        }
-    }
-
     *send_status = send_raw(dest, index, *len);
 
     return dest;
@@ -1070,28 +1063,29 @@ char * call::send_scene(int index, int *send_status, int *len)
 void call::do_bookkeeping(message *curmsg)
 {
     /* If this message increments a counter, do it now. */
-    if(int counter = curmsg -> counter) {
-        computeStat(CStat::E_ADD_GENERIC_COUNTER, 1, counter - 1);
+    if (curmsg -> counter) {
+        computeStat(CStat::E_ADD_GENERIC_COUNTER, 1, curmsg->counter - 1);
     }
 
     /* If this message can be used to compute RTD, do it now */
-    if(int rtd = curmsg -> start_rtd) {
-        start_time_rtd[rtd - 1] = getmicroseconds();
+    if (curmsg->start_rtd) {
+        start_time_rtd[curmsg->start_rtd - 1] = getmicroseconds();
     }
 
-    if(int rtd = curmsg -> stop_rtd) {
+    if (curmsg->stop_rtd) {
+        int rtd = curmsg->stop_rtd;
         if (!rtd_done[rtd - 1]) {
             unsigned long long start = start_time_rtd[rtd - 1];
             unsigned long long end = getmicroseconds();
 
-            if(dumpInRtt) {
+            if (dumpInRtt) {
                 call_scenario->stats->computeRtt(start, end, rtd);
             }
 
             computeStat(CStat::E_ADD_RESPONSE_TIME_DURATION,
                         (end - start) / 1000, rtd - 1);
 
-            if (!curmsg -> repeat_rtd) {
+            if (!curmsg->repeat_rtd) {
                 rtd_done[rtd - 1] = true;
             }
         }
@@ -1495,12 +1489,12 @@ bool call::run()
     message *curmsg;
     if (initCall) {
         if(msg_index >= (int)call_scenario->initmessages.size()) {
-            ERROR("Scenario initialization overrun for call %s (%p) (index = %d)\n", id, _RCAST(void*, this), msg_index);
+            ERROR("Scenario initialization overrun for call %s (%p) (index = %d)", id, _RCAST(void*, this), msg_index);
         }
         curmsg = call_scenario->initmessages[msg_index];
     } else {
         if(msg_index >= (int)call_scenario->messages.size()) {
-            ERROR("Scenario overrun for call %s (%p) (index = %d)\n", id, _RCAST(void*, this), msg_index);
+            ERROR("Scenario overrun for call %s (%p) (index = %d)", id, _RCAST(void*, this), msg_index);
         }
         curmsg = call_scenario->messages[msg_index];
     }
@@ -2040,7 +2034,7 @@ char* call::createSendingMessage(SendingMessage *src, int P_index, char *msg_buf
                 begin--;
             }
             if (begin == msg_buffer) {
-                ERROR("Can not find beginning of a line for the media port!\n");
+                ERROR("Can not find beginning of a line for the media port!");
             }
             play_args_t* play_args = NULL;
             if (strstr(begin, "audio")) {
@@ -2116,7 +2110,7 @@ char* call::createSendingMessage(SendingMessage *src, int P_index, char *msg_buf
             break;
         case E_Message_Authentication:
             if (auth_marker) {
-                ERROR("Only one [authentication] keyword is currently supported!\n");
+                ERROR("Only one [authentication] keyword is currently supported!");
             }
             auth_marker = dest;
             dest += snprintf(dest, left, "[authentication place holder]");
@@ -2206,7 +2200,7 @@ char* call::createSendingMessage(SendingMessage *src, int P_index, char *msg_buf
             createSendingMessage(comp->comp_param.filename, -2, buffer, sizeof(buffer));
             FILE *f = fopen(buffer, "r");
             if (!f) {
-                ERROR("Could not open '%s': %s\n", buffer, strerror(errno));
+                ERROR("Could not open '%s': %s", buffer, strerror(errno));
             }
             int ret;
             while ((ret = fread(dest, 1, left, f)) > 0) {
@@ -2214,7 +2208,7 @@ char* call::createSendingMessage(SendingMessage *src, int P_index, char *msg_buf
                 dest += ret;
             }
             if (ret < 0) {
-                ERROR("Error reading '%s': %s\n", buffer, strerror(errno));
+                ERROR("Error reading '%s': %s", buffer, strerror(errno));
             }
             fclose(f);
             break;
@@ -2225,7 +2219,7 @@ char* call::createSendingMessage(SendingMessage *src, int P_index, char *msg_buf
             /* We are injecting an authentication line. */
             if (char *tmp = strstr(orig_dest, "[authentication")) {
                 if (auth_marker) {
-                    ERROR("Only one [authentication] keyword is currently supported!\n");
+                    ERROR("Only one [authentication] keyword is currently supported!");
                 }
                 auth_marker = tmp;
                 auth_comp = (struct MessageComponent *)calloc(1, sizeof(struct MessageComponent));
@@ -2433,7 +2427,7 @@ bool call::process_twinSippCom(char * msg)
                         found = true;
                         break;
                     } else {
-                        WARNING("Unexpected sender for the received peer message \n%s\n", msg);
+                        WARNING("Unexpected sender for the received peer message\n%s\n", msg);
                         return rejectCall();
                     }
                 } else {
@@ -2625,7 +2619,7 @@ void call::formatNextReqUrl(const char* contact)
 void call::computeRouteSetAndRemoteTargetUri(const char* rr, const char* contact, bool bRequestIncoming)
 {
     if (!*contact) {
-        WARNING("Cannot record route set if there is no Contact\n");
+        WARNING("Cannot record route set if there is no Contact");
         return;
     }
 
@@ -2739,7 +2733,7 @@ void call::queue_up(const char* msg)
 
 bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
 {
-    int             reply_code;
+    int             reply_code = 0;
     static char     request[65];
     char            responsecseqmethod[65];
     char            txn[MAX_HEADER_LEN];
@@ -2754,9 +2748,12 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
               strlen(msg), id, hash(msg), msg);
 
     setRunning();
+    message *curmsg = call_scenario->messages[msg_index];
 
     /* Ignore the messages received during a pause if -pause_msg_ign is set */
-    if(call_scenario->messages[msg_index] -> M_type == MSG_TYPE_PAUSE && pause_msg_ign) return(true);
+    if (curmsg->M_type == MSG_TYPE_PAUSE && pause_msg_ign) {
+        return true;
+    }
 
     /* Get our destination if we have none. */
     if (call_peer.ss_family == AF_UNSPEC && src) {
@@ -2764,8 +2761,8 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
     }
 
     /* Authorize nop as a first command, even in server mode */
-    if((msg_index == 0) && (call_scenario->messages[msg_index] -> M_type == MSG_TYPE_NOP)) {
-        queue_up (msg);
+    if (msg_index == 0 && curmsg->M_type == MSG_TYPE_NOP) {
+        queue_up(msg);
         paused_until = 0;
         return run();
     }
@@ -2832,8 +2829,8 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
 
 #ifdef RTP_STREAM
     /* Check if message has a SDP in it; and extract media information. */
-    if (!strcmp(get_header_content(msg, (char*)"Content-Type:"), "application/sdp") &&
-            hasMedia == 1) {
+    if (!strcmp(get_header_content(msg, "Content-Type:"), "application/sdp") &&
+            hasMedia == 1 && !curmsg->ignoresdp) {
         extract_rtp_remote_addr(msg);
     }
 #endif
@@ -2853,7 +2850,7 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
                 return false; // Call aborted by unexpected message handling
             }
 #ifdef PCAPPLAY
-        } else if ((hasMedia == 1) && *(strstr(msg, "\r\n\r\n")+4) != '\0') {
+        } else if (hasMedia == 1 && !curmsg->ignoresdp && *(strstr(msg, "\r\n\r\n") + 4) != '\0') {
             /* Get media info if we find something like an SDP */
             get_remote_media_addr(msg);
 #endif
@@ -2891,8 +2888,9 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
             if (((strncmp(request, "INVITE", 6) == 0)
                     || (strncmp(request, "ACK", 3) == 0)
                     || (strncmp(request, "PRACK", 5) == 0))
-                    && (hasMedia == 1))
+                    && hasMedia == 1 && !curmsg->ignoresdp) {
                 get_remote_media_addr(msg);
+            }
 #endif
 
             reply_code = 0;
@@ -2968,7 +2966,7 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
                                               TRANSPORT_TO_STRING(transport), call_scenario->transactions[checkTxn - 1].name, msg);
                                     callDebug("Ignoring final %s message for transaction %s (hash %lu):\n\n%s\n",
                                               TRANSPORT_TO_STRING(transport), call_scenario->transactions[checkTxn - 1].name, hash(msg), msg);
-                                    WARNING("Ignoring final %s message for transaction %s (hash %lu):\n\n%s\n",
+                                    WARNING("Ignoring final %s message for transaction %s (hash %lu):\n\n%s",
                                             TRANSPORT_TO_STRING(transport), call_scenario->transactions[checkTxn - 1].name, hash(msg), msg);
                                     return true;
                                 }
@@ -3209,7 +3207,7 @@ bool call::process_incoming(const char* msg, const struct sockaddr_storage* src)
         unsigned int candidate;
 
         if (call_scenario->messages[search_index]->next && M_callVariableTable->getVar(test)->isSet()) {
-            WARNING("Last message generates an error and will not be used for next sends (for last_ variables):\r\n%s", msg);
+            WARNING("Last message generates an error and will not be used for next sends (for last_ variables):\n%s\n", msg);
         }
 
         /* We are just waiting for a message to be received, if any of the
@@ -3266,7 +3264,7 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
             char msgPart[MAX_SUB_MESSAGE_LENGTH];
 
             /* Where to look. */
-            const char* haystack;
+            const char* haystack = nullptr;
 
             if(currentAction->getLookingPlace() == CAction::E_LP_HDR) {
                 extractSubMessage (msg,
@@ -3278,7 +3276,7 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                 if(currentAction->getCheckIt() == true && (strlen(msgPart) == 0)) {
                     // the sub message is not found and the checking action say it
                     // MUST match --> Call will be marked as failed but will go on
-                    WARNING("Failed regexp match: header %s not found in message %s\n", currentAction->getLookingChar(), msg);
+                    WARNING("Failed regexp match: header %s not found in message\n%s\n", currentAction->getLookingChar(), msg);
                     return(call::E_AR_HDR_NOT_FOUND);
                 }
                 haystack = msgPart;
@@ -3286,7 +3284,7 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                 haystack = strstr(msg, "\r\n\r\n");
                 if (!haystack) {
                     if (currentAction->getCheckIt() == true) {
-                        WARNING("Failed regexp match: body not found in message %s\n", msg);
+                        WARNING("Failed regexp match: body not found in message\n%s\n", msg);
                         return(call::E_AR_HDR_NOT_FOUND);
                     }
                     msgPart[0] = '\0';
@@ -3300,12 +3298,12 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                 haystack = M_callVariableTable->getVar(currentAction->getVarInId())->getString();
                 if (!haystack) {
                     if (currentAction->getCheckIt() == true) {
-                        WARNING("Failed regexp match: variable $%d not set\n", currentAction->getVarInId());
+                        WARNING("Failed regexp match: variable $%d not set", currentAction->getVarInId());
                         return(call::E_AR_HDR_NOT_FOUND);
                     }
                 }
             } else {
-                ERROR("Invalid looking place: %d\n", currentAction->getLookingPlace());
+                ERROR("Invalid looking place: %d", currentAction->getLookingPlace());
             }
             bool did_match = (currentAction->executeRegExp(haystack, M_callVariableTable) > 0);
 
@@ -3396,7 +3394,7 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                 ERROR("Invalid port for setdest: %s", str_port);
             }
 
-            int protocol;
+            int protocol = 0;
             if (!strcmp(str_protocol, "udp") || !strcmp(str_protocol, "UDP")) {
                 protocol = T_UDP;
             } else if (!strcmp(str_protocol, "tcp") || !strcmp(str_protocol, "TCP")) {
@@ -3704,7 +3702,7 @@ call::T_ActionResult call::executeAction(const char* msg, message* curmsg)
                 pid_t ret;
                 while ((ret=waitpid(l_pid, NULL, 0)) != l_pid) {
                     if (ret != -1) {
-                        ERROR("waitpid returns %1d for child %1d", ret, l_pid);
+                        ERROR("waitpid returns %1ld for child %1ld", (long) ret, (long) l_pid);
                     }
                 }
                 break;

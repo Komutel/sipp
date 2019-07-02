@@ -36,6 +36,16 @@
  */
 
 #include <dlfcn.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+#ifdef __APPLE__
+/* Provide OSX version of extern char **environ; */
+#include <crt_externs.h>
+#define environ (*_NSGetEnviron())
+#endif
 
 #define GLOBALS_FULL_DEFINITION
 #include "sipp.hpp"
@@ -164,11 +174,13 @@ struct sipp_option options_table[] = {
 #ifdef USE_TLS
     {"tls_cert", "Set the name for TLS Certificate file. Default is 'cacert.pem", SIPP_OPTION_STRING, &tls_cert_name, 1},
     {"tls_key", "Set the name for TLS Private Key file. Default is 'cakey.pem'", SIPP_OPTION_STRING, &tls_key_name, 1},
+    {"tls_ca", "Set the name for TLS CA file. If not specified, X509 verification is not activated.", SIPP_OPTION_STRING, &tls_ca_name, 1},
     {"tls_crl", "Set the name for Certificate Revocation List file. If not specified, X509 CRL is not activated.", SIPP_OPTION_STRING, &tls_crl_name, 1},
     {"tls_version", "Set the TLS protocol version to use (1.0, 1.1, 1.2) -- default is autonegotiate", SIPP_OPTION_FLOAT, &tls_version, 1},
 #else
     {"tls_cert", NULL, SIPP_OPTION_NEED_SSL, NULL, 1},
     {"tls_key", NULL, SIPP_OPTION_NEED_SSL, NULL, 1},
+    {"tls_ca", NULL, SIPP_OPTION_NEED_SSL, NULL, 1},
     {"tls_crl", NULL, SIPP_OPTION_NEED_SSL, NULL, 1},
     {"tls_version", NULL, SIPP_OPTION_NEED_SSL, NULL, 1},
 #endif
@@ -245,7 +257,7 @@ struct sipp_option options_table[] = {
     {"inf", "Inject values from an external CSV file during calls into the scenarios.\n"
      "First line of this file say whether the data is to be read in sequence (SEQUENTIAL), random (RANDOM), or user (USER) order.\n"
      "Each line corresponds to one call and has one or more ';' delimited data fields. Those fields can be referred as [field0], [field1], ... in the xml scenario file.  Several CSV files can be used simultaneously (syntax: -inf f1.csv -inf f2.csv ...)", SIPP_OPTION_INPUT_FILE, NULL, 1},
-    {"infindex", "file field\nCreate an index of file using field.  For example -inf users.csv -infindex users.csv 0 creates an index on the first key.", SIPP_OPTION_INDEX_FILE, NULL, 1 },
+    {"infindex", "file field\nCreate an index of file using field.  For example -inf ../path/to/users.csv -infindex users.csv 0 creates an index on the first key.", SIPP_OPTION_INDEX_FILE, NULL, 1 },
     {"ip_field", "Set which field from the injection file contains the IP address from which the client will send its messages.\n"
      "If this option is omitted and the '-t ui' option is present, then field 0 is assumed.\n"
      "Use this option together with '-t ui'", SIPP_OPTION_INT, &peripfield, 1},
@@ -405,10 +417,7 @@ static struct sipp_option *find_option(const char* option) {
 extern unsigned pollnfds;
 #ifdef HAVE_EPOLL
 extern int epollfd;
-extern struct epoll_event   epollfiles[SIPP_MAXFDS];
 extern struct epoll_event*  epollevents;
-#else
-extern struct pollfd        pollfiles[SIPP_MAXFDS];
 #endif
 
 extern SIPpSocket  *sockets[SIPP_MAXFDS];
@@ -443,7 +452,7 @@ static void traffic_thread()
 {
     /* create the file */
     char L_file_name[MAX_PATH];
-    sprintf(L_file_name, "%s_%d_screen.log", scenario_file, getpid());
+    sprintf(L_file_name, "%s_%ld_screen.log", scenario_file, (long) getpid());
 
     getmilliseconds();
 
@@ -721,10 +730,95 @@ static char* wrap(const char* in, int offset, int size)
     return out;
 }
 
+/* If stdout is a TTY, wrap stdout in a call to PAGER (generally less(1)).
+ * Returns a pid_t you'll have to pass to end_pager(). */
+static pid_t begin_pager() {
+    char pager[15] = "/usr/bin/pager";
+    char *argv[2] = {NULL, NULL};
+
+    int stdout_fd = fileno(stdout);
+    int read_write[2];
+    pid_t ret;
+
+    if (!isatty(stdout_fd)) {
+        return 0;
+    }
+
+    /* Get pager first, so we can bail if it's not there */
+    argv[0] = getenv("PAGER");
+    if (!argv[0]) {
+        argv[0] = pager; /* missing PAGER */
+    } else if (!*argv[0]) {
+        return 0; /* blank PAGER */
+    }
+
+    /* Should use euidaccess(3), but requires _GNU_SOURCE */
+    if (access(argv[0], X_OK) < 0) {
+        perror(argv[0]);
+        return 0;
+    }
+
+    /* Set up pipes and fork */
+    if (pipe(&read_write[0]) < 0) {
+        perror("pipe");
+        return 0;
+    }
+    if ((ret = fork()) < 0) {
+        perror("fork");
+        return 0;
+    }
+
+    /* Switch stdout FD in parent */
+    if (ret != 0) {
+        fflush(stdout);
+        close(stdout_fd);
+        close(read_write[0]);
+        if (dup2(read_write[1], stdout_fd) < 0) {
+            perror("dup2");
+        } else {
+            close(read_write[1]);
+        }
+        return ret;
+    }
+
+    /* Switch stdin FD and start pager in child */
+    if (setenv("LESS", "FRX", 1) < 0) {
+        perror("setenv");
+    }
+
+    close(STDIN_FILENO);
+    close(read_write[1]);
+    if (dup2(read_write[0], STDIN_FILENO) < 0) {
+        perror("dup2");
+    } else {
+        close(read_write[0]);
+    }
+    execve(argv[0], argv, environ);
+
+    /* This was not supposed to happen. Missing binary? */
+    perror("execve");
+    return 0;
+}
+
+/* Make sure we flush and close, or the child won't get all the data (and know
+ * when we're done). Wait for the child to exit first. */
+void end_pager(pid_t pager) {
+    fflush(stdout);
+    fclose(stdout);
+    while (pager != 0) {
+        int wstatus;
+        if (waitpid(pager, &wstatus, 0) == pager) {
+            pager = 0;
+        }
+    }
+}
+
 /* Help screen */
 static void help()
 {
     int i, max;
+
+    pid_t pager = begin_pager();
 
     printf
     ("\n"
@@ -786,6 +880,8 @@ static void help()
         "   99: Normal exit without calls processed\n"
         "   -1: Fatal error\n"
         "   -2: Fatal error binding a socket\n");
+
+    end_pager(pager);
 }
 
 
@@ -939,10 +1035,10 @@ static void manage_oversized_file(int signum)
     }
     managing = 1;
 
-    snprintf(L_file_name, MAX_PATH, "%s_%d_traces_oversized.log", scenario_file, getpid());
+    snprintf(L_file_name, MAX_PATH, "%s_%ld_traces_oversized.log", scenario_file, (long) getpid());
     f = fopen(L_file_name, "w");
     if (!f) {
-        ERROR_NO("Unable to open oversized log file\n");
+        ERROR_NO("Unable to open oversized log file");
     }
 
     GET_TIME(&currentTime);
@@ -1053,18 +1149,20 @@ static void set_scenario(const char* name)
     free(scenario_file);
     free(scenario_path);
 
-    const char* ext = strrchr(name, '.');
-    if (ext && strcmp(ext, ".xml") == 0) {
-        scenario_file = strndup(name, ext - name);
+    const char* sep = strrchr(name, '/');
+    if (sep) {
+        ++sep; // include slash
+        scenario_path = strndup(name, sep - name);
     } else {
-        scenario_file = strdup(name);
+        scenario_path = strdup("");
+        sep = name;
     }
 
-    const char* sep = strrchr(scenario_file, '/');
-    if (sep) {
-        scenario_path = strndup(scenario_file, sep - scenario_file);
+    const char* ext = strrchr(sep, '.');
+    if (ext && strcmp(ext, ".xml") == 0) {
+        scenario_file = strndup(sep, ext - sep);
     } else {
-        scenario_path = NULL;
+        scenario_file = strdup(sep);
     }
 }
 
@@ -1226,9 +1324,6 @@ int main(int argc, char *argv[])
 #endif
     memset(media_ip, 0, sizeof(media_ip));
     memset(control_ip, 0, sizeof(control_ip));
-
-    /* Initialize the tolower table. */
-    init_tolower_table();
 
     /* Initialize our global variable structure. */
     globalVariables = new AllocVariableTable(NULL);
@@ -1432,7 +1527,7 @@ int main(int argc, char *argv[])
                     break;
                 case 'c':
                     if (strlen(comp_error)) {
-                        ERROR("No " COMP_PLUGGIN " plugin available:\n%s", comp_error);
+                        ERROR("No " COMP_PLUGGIN " plugin available: %s", comp_error);
                     }
                     transport = T_UDP;
                     compression = 1;
@@ -1454,7 +1549,7 @@ int main(int argc, char *argv[])
                 }
 
                 if (peripsocket && transport != T_UDP) {
-                    ERROR("You can only use a perip socket with UDP!\n");
+                    ERROR("You can only use a perip socket with UDP!");
                 }
                 break;
             case SIPP_OPTION_NEED_SCTP:
@@ -1529,10 +1624,10 @@ int main(int argc, char *argv[])
                 break;
             case SIPP_OPTION_3PCC:
                 if (slave_masterSet) {
-                    ERROR("-3PCC option is not compatible with -master and -slave options\n");
+                    ERROR("-3PCC option is not compatible with -master and -slave options");
                 }
                 if (extendedTwinSippMode) {
-                    ERROR("-3pcc and -slave_cfg options are not compatible\n");
+                    ERROR("-3pcc and -slave_cfg options are not compatible");
                 }
                 REQUIRE_ARG();
                 CHECK_PASS();
@@ -1543,7 +1638,9 @@ int main(int argc, char *argv[])
             case SIPP_OPTION_SCENARIO:
                 REQUIRE_ARG();
                 CHECK_PASS();
-                if (!strcmp(argv[argi - 1], "-sf")) {
+                if (main_scenario) {
+                    ERROR("Internal error, main_scenario already set");
+                } else if (!strcmp(argv[argi - 1], "-sf")) {
                     set_scenario(argv[argi]);
                     if (useLogf == 1) {
                         rotate_logfile();
@@ -1552,16 +1649,15 @@ int main(int argc, char *argv[])
                     main_scenario->stats->setFileName(scenario_file, ".csv");
                 } else if (!strcmp(argv[argi - 1], "-sn")) {
                     int i = find_scenario(argv[argi]);
-
-                    main_scenario = new scenario(0, i);
                     set_scenario(argv[argi]);
-                    main_scenario->stats->setFileName(argv[argi], ".csv");
+                    main_scenario = new scenario(0, i);
+                    main_scenario->stats->setFileName(scenario_file, ".csv");
                 } else if (!strcmp(argv[argi - 1], "-sd")) {
                     int i = find_scenario(argv[argi]);
                     fprintf(stdout, "%s", default_scenario[i]);
                     exit(EXIT_OTHER);
                 } else {
-                    ERROR("Internal error, I don't recognize %s as a scenario option\n", argv[argi] - 1);
+                    ERROR("Internal error, I don't recognize %s as a scenario option", argv[argi] - 1);
                 }
                 break;
             case SIPP_OPTION_OOC_SCENARIO:
@@ -1573,14 +1669,14 @@ int main(int argc, char *argv[])
                     int i = find_scenario(argv[argi]);
                     ooc_scenario = new scenario(0, i);
                 } else {
-                    ERROR("Internal error, I don't recognize %s as a scenario option\n", argv[argi] - 1);
+                    ERROR("Internal error, I don't recognize %s as a scenario option", argv[argi] - 1);
                 }
                 break;
             case SIPP_OPTION_SLAVE_CFG:
                 REQUIRE_ARG();
                 CHECK_PASS();
                 if (twinSippMode) {
-                    ERROR("-slave_cfg and -3pcc options are not compatible\n");
+                    ERROR("-slave_cfg and -3pcc options are not compatible");
                 }
                 extendedTwinSippMode = true;
                 slave_cfg_file = new char [strlen(argv[argi]) + 1];
@@ -1591,10 +1687,10 @@ int main(int argc, char *argv[])
                 REQUIRE_ARG();
                 CHECK_PASS();
                 if (slave_masterSet) {
-                    ERROR("-slave and -master options are not compatible\n");
+                    ERROR("-slave and -master options are not compatible");
                 }
                 if (twinSippMode) {
-                    ERROR("-master and -slave options are not compatible with -3PCC option\n");
+                    ERROR("-master and -slave options are not compatible with -3PCC option");
                 }
                 *((char**)option->data) = argv[argi];
                 slave_masterSet = true;
@@ -1633,7 +1729,7 @@ int main(int argc, char *argv[])
                 } else if (!strcmp(argv[argi], "loose")) {
                     *((int*)option->data) = RTCHECK_LOOSE;
                 } else {
-                    ERROR("Unknown retransmission detection method: %s\n", argv[argi]);
+                    ERROR("Unknown retransmission detection method: %s", argv[argi]);
                 }
                 break;
             case SIPP_OPTION_TDMMAP: {
@@ -1688,7 +1784,7 @@ int main(int argc, char *argv[])
                         } else if (!strcmp(p, "pingreply")) {
                             mask = DEFAULT_BEHAVIOR_PINGREPLY;
                         } else {
-                            ERROR("Unknown default behavior: '%s'\n", token);
+                            ERROR("Unknown default behavior: '%s'", token);
                         }
                         switch(mode) {
                         case 0:
@@ -1748,7 +1844,7 @@ int main(int argc, char *argv[])
             }
             break;
             default:
-                ERROR("Internal error: I don't recognize the option type for %s\n", argv[argi]);
+                ERROR("Internal error: I don't recognize the option type for %s", argv[argi]);
             }
         }
     }
@@ -1759,7 +1855,7 @@ int main(int argc, char *argv[])
     }
 
     if ((extendedTwinSippMode && !slave_masterSet) || (!extendedTwinSippMode && slave_masterSet)) {
-        ERROR("-slave_cfg option must be used with -slave or -master option\n");
+        ERROR("-slave_cfg option must be used with -slave or -master option");
     }
 
     if (peripsocket) {
@@ -1777,9 +1873,13 @@ int main(int argc, char *argv[])
         lose_packets = 1;
     }
 
-    /* trace file setting */
+    /* If no scenario was selected, choose the uac one */
     if (scenario_file == NULL) {
-        set_scenario("sipp");
+        assert(main_scenario == NULL);
+        int i = find_scenario("uac");
+        set_scenario("uac");
+        main_scenario = new scenario(0, i);
+        main_scenario->stats->setFileName(scenario_file, ".csv");
     }
 
 #ifdef USE_TLS
@@ -1817,7 +1917,7 @@ int main(int argc, char *argv[])
 
     if (useCountf == 1) {
         char L_file_name [MAX_PATH];
-        sprintf(L_file_name, "%s_%d_counts.csv", scenario_file, getpid());
+        sprintf(L_file_name, "%s_%ld_counts.csv", scenario_file, (long) getpid());
         countf = fopen(L_file_name, "w");
         if (!countf) {
             ERROR("Unable to create '%s'", L_file_name);
@@ -1827,7 +1927,7 @@ int main(int argc, char *argv[])
 
     if (useErrorCodesf == 1) {
         char L_file_name [MAX_PATH];
-        sprintf(L_file_name, "%s_%d_error_codes.csv", scenario_file, getpid());
+        sprintf(L_file_name, "%s_%ld_error_codes.csv", scenario_file, (long) getpid());
         codesf = fopen(L_file_name, "w");
         if (!codesf) {
             ERROR("Unable to create '%s'", L_file_name);
@@ -1836,7 +1936,7 @@ int main(int argc, char *argv[])
 
 
     if (dumpInRtt == 1) {
-        main_scenario->stats->initRtt((char*)scenario_file, (char*)".csv",
+        main_scenario->stats->initRtt(scenario_file, ".csv",
                                       report_freq_dumpRtt);
     }
 
@@ -1871,12 +1971,6 @@ int main(int argc, char *argv[])
         }
     }
 
-    /* Load default scenario in case nothing was loaded */
-    if (!main_scenario) {
-        main_scenario = new scenario(0, 0);
-        main_scenario->stats->setFileName("uac", ".csv");
-        sprintf(scenario_file,"uac");
-    }
     /*
     if (!ooc_scenario) {
       ooc_scenario = new scenario(0, find_scenario("ooc_default"));
@@ -1947,7 +2041,7 @@ int main(int argc, char *argv[])
         break;
         default:
             // parent process - killing the parent - the child get the parent pid
-            printf("Background mode - PID=[%d]\n", l_pid);
+            printf("Background mode - PID=[%ld]\n", (long) l_pid);
             exit(EXIT_OTHER);
         }
     }
@@ -2029,5 +2123,6 @@ int main(int argc, char *argv[])
 #endif
 
     free(scenario_file);
+    free(scenario_path);
     sipp_exit(EXIT_TEST_RES_UNKNOWN);
 }

@@ -88,12 +88,12 @@ float2timer(float time, struct timeval *tvp)
 static char* find_file(const char* filename)
 {
     char *fullpath;
-    if (filename[0] == '/' || !scenario_path) {
+    if (filename[0] == '/' || !*scenario_path) {
         return strdup(filename);
     }
 
     fullpath = malloc(MAX_PATH);
-    snprintf(fullpath, MAX_PATH, "%s/%s", scenario_path, filename);
+    snprintf(fullpath, MAX_PATH, "%s%s", scenario_path, filename);
 
     if (access(fullpath, R_OK) < 0) {
         free(fullpath);
@@ -161,11 +161,11 @@ void send_packets_pcap_cleanup(void* arg)
     }
 }
 
-int send_packets(play_args_t* play_args)
+void send_packets(play_args_t* play_args)
 {
     pthread_cleanup_push(send_packets_pcap_cleanup, ((void*)play_args));
 
-    int ret, sock, port_diff;
+    int ret = 0, sock, port_diff;
     pcap_pkt *pkt_index, *pkt_max;
     uint16_t *from_port, *to_port;
     struct timeval didsleep = { 0, 0 };
@@ -189,6 +189,7 @@ int send_packets(play_args_t* play_args)
         sock = socket(PF_INET6, SOCK_RAW, IPPROTO_UDP);
         if (sock < 0) {
             ERROR("Can't create raw IPv6 socket (need to run as root?): %s", strerror(errno));
+            goto pop2;
         }
         from_port = &(((struct sockaddr_in6 *)from)->sin6_port);
         len = sizeof(struct sockaddr_in6);
@@ -200,13 +201,13 @@ int send_packets(play_args_t* play_args)
         to_port = &(((struct sockaddr_in *)to)->sin_port);
         if (sock < 0) {
             ERROR("Can't create raw IPv4 socket (need to run as root?): %s", strerror(errno));
-            return ret;
+            goto pop2;
         }
     }
 
     if ((ret = bind(sock, (struct sockaddr *)from, len))) {
         ERROR("Can't bind media raw socket");
-        return ret;
+        goto pop2;
     }
 
 #ifndef MSG_DONTWAIT
@@ -228,12 +229,10 @@ int send_packets(play_args_t* play_args)
         memcpy(&(from6.sin6_addr.s6_addr), &(((struct sockaddr_in6 *)(void *) from)->sin6_addr.s6_addr), sizeof(from6.sin6_addr.s6_addr));
     }
 
-
     /* Ensure the sender socket is closed when the thread exits - this
      * allows the thread to be cancelled cleanly.
      */
     pthread_cleanup_push(send_packets_cleanup, ((void *) &sock));
-
 
     while (pkt_index < pkt_max) {
         memcpy(udp, pkt_index->data, pkt_index->pktlen);
@@ -281,9 +280,8 @@ int send_packets(play_args_t* play_args)
         }
 #endif
         if (ret < 0) {
-            close(sock);
             WARNING("send_packets.c: sendto failed with error: %s", strerror(errno));
-            return( -1);
+            goto pop1;
         }
 
         rtp_pckts_pcap++;
@@ -293,9 +291,10 @@ int send_packets(play_args_t* play_args)
     }
 
     /* Closing the socket is handled by pthread_cleanup_push()/pthread_cleanup_pop() */
+pop1:
     pthread_cleanup_pop(1);
+pop2:
     pthread_cleanup_pop(1);
-    return 0;
 }
 
 /*

@@ -1,13 +1,25 @@
+BREAKING(!) changes in 3.6.0
+============================
+
+* Automatic filenames (trace files, error files, etc..) are now created in
+  the current working directory instead of in the directory of the scenario
+  file. (Issue #399, reported by @sergey-safarov.)
+* Only validates SSL certficate if CA-file is separately specified!
+  (PR #335, by Patrick Wildt @bluerise.)
+
+
 Bugs fixed in 3.6.0
 ===================
 
 * Fix `[routes]` header in UAS scenario's. (Issue #262, reported by
   Stefan Mititelu (@smititelu).)
+* last\_Keyword does not search in SIP body anymore (#207, reported by Zoltan).
 
 
 Changes in 3.6.0
 ================
 
+* Added PAGER by default to the extremely large sipp help output.
 * Removed unused RTPStream code concerning video streams. Also
   consolidated the rtpstream audio port usage to reuse the global
   `[media_port]` instead of the `[rtpstream_audio_port]`.
@@ -22,7 +34,7 @@ Changes in 3.6.0
 Features added in 3.6.0
 =======================
 
-* Added `play_dtmf` code originally from
+* Add `play_dtmf` code originally from
   https://sourceforge.net/p/sipp/patches/50/ (Dmitry Kunilov), then
   pull #82 (@horacimacias) and then #141 (@vodik). Compile with
   pcap-play support, and use it by adding `<exec play_dtmf="1234*#"/>`
@@ -38,10 +50,28 @@ Features added in 3.6.0
     and must be between 50 and 2000.
   - Instead of digits a `[field...]` keyword is also accepted.
   - Make sure you add enough `<pause/>` after `play_dtmf`.
-* Added `rtp_echo` action (pull #259 by Snom Technology). Compile with
+* Add `rtp_echo` action (pull #259 by Snom Technology). Compile with
   `--with-rtpstream` and use it by adding `<rtp_echo value="0">` to stop
   the RTP echo enabled via `-rtp_echo`. RTP echo can be restarted via
   `<rtp_echo value="1">` action. Usage example in `regress/github-#0259/uas.xml`
+* Added the required constants for G722 (payload 9) and iLBC at 30ms per frame
+  to rtp\_stream media actions. (PR #366, by Jasper Hafkenscheid @hafkensite.)
+* Add quick and dirty detection of invalid XML (issue #322).
+* Clarify that `-infindex` should takes a basename only (issue #395, reported
+  by @sergey-safarov).
+
+
+Bugs fixed in 3.5.3
+===================
+
+* Fix `[routes]` header in UAS scenario's. (Issue #262, reported by
+  Stefan Mititelu (@smititelu).)
+  (Backported from b6c7b209 from 3.6.)
+* Fix bad Content-Length calculation when whitespace was between the CRLF
+  pairs that separate the body. (Issue #337, fixed by Serg Stetsuk
+  (@sergstetsuk)).
+* Fix crash in pcap play on send failure because of pthread\_cleanup macros.
+  (Issue #74, #370, reported by various people.)
 
 
 Bugs fixed in 3.5.2

@@ -21,31 +21,28 @@
  * Screen.cpp : Simple curses & logfile encapsulation
  */
 
-#include "stat.hpp"
-#include "sipp.hpp"
 
+#include <stdarg.h>
 #include <curses.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
-#include <screen.hpp>
 #include <errno.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-
-#ifdef __SUNOS
-#include <stdarg.h>
-#endif
-
 #include <unistd.h>
 
-extern bool    timeout_exit;
+#include "screen.hpp"
+#include "sipp.hpp"
+
+/* Export these so others needn't include curses.h */
+int key_backspace = KEY_BACKSPACE;
+int key_dc = KEY_DC;
 
 unsigned long screen_errors;
 int           screen_inited = 0;
 char          screen_exename[255];
-extern bool   backgroundMode;
 
 /* ERR is actually -1, but this prevents us from needing to use curses.h in
  * sipp.cpp. */
@@ -72,7 +69,7 @@ void screen_show_errors() {
         return;
     }
 
-    fprintf(stderr, "%s", screen_last_error);
+    fprintf(stderr, "%s\n", screen_last_error);
     if (screen_errors > 1) {
         if (screen_logfile[0] != '\0') {
             fprintf(stderr,
@@ -125,13 +122,12 @@ static void _screen_error(int fatal, bool use_errno, int error, const char *fmt,
     if (use_errno) {
         c += sprintf(c, ", errno = %d (%s)", error, strerror(error));
     }
-    c+= sprintf(c, ".\n");
     screen_errors++;
 
     if (!error_lfi.fptr && print_all_responses) {
         rotate_errorf();
         if (error_lfi.fptr) {
-            fprintf(error_lfi.fptr, "%s: The following events occured:\n",
+            fprintf(error_lfi.fptr, "%s: The following events occurred:\n",
                     screen_exename);
             fflush(error_lfi.fptr);
         } else {
@@ -160,7 +156,7 @@ static void _screen_error(int fatal, bool use_errno, int error, const char *fmt,
             }
         }
     } else if (fatal) {
-        fprintf(stderr, "%s", screen_last_error);
+        fprintf(stderr, "%s\n", screen_last_error);
         fflush(stderr);
     }
 

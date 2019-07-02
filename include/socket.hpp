@@ -114,6 +114,7 @@ private:
     ssize_t read_message(char *buf, size_t len, struct sockaddr_storage *src);
     struct socketbuf *ss_in;    /* Buffered input. */
     struct socketbuf *ss_out;   /* Buffered output. */
+    struct socketbuf *ss_out_tail; /* Tail of buffered output */
     size_t ss_msglen;           /* Is there a complete SIP message waiting, and if so how big? */
 
     void close_calls();
@@ -187,7 +188,7 @@ struct socketbuf {
 #define WS_BUFFER 2 /* Buffer the message if there is no room for writing the message. */
 
 
-#if defined (__hpux) || defined (__alpha) && !defined (__FreeBSD__)
+#if defined (__hpux) || (defined (__alpha) && !defined (__FreeBSD__) && !defined (__linux__))
 #define sipp_socklen_t int
 #else
 #define sipp_socklen_t socklen_t

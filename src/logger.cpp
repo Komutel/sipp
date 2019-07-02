@@ -41,9 +41,8 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
+
 #include "logger.hpp"
-#include "screen.hpp"
-#include "sipp.hpp"
 
 #define SIPP_ENDL "\r\n"
 
@@ -52,7 +51,7 @@ double last_rtpstream_rate_out = 0;
 double last_rtpstream_rate_in = 0;
 #endif
 
-extern void print_stats_in_file(FILE * f);
+void print_stats_in_file(FILE * f);
 
 bool do_hide = true;
 bool show_index = false;
@@ -653,7 +652,7 @@ void print_stats_in_file(FILE * f)
                     "",
                     "");
         } else {
-            ERROR("Scenario command not implemented in display\n");
+            ERROR("Scenario command not implemented in display");
         }
 
         if(lose_packets && (curmsg -> nb_lost)) {
@@ -858,7 +857,7 @@ static void rotatef(struct logfile_info* lfi)
     char L_rotate_file_name [MAX_PATH];
 
     if (!lfi->fixedname) {
-        sprintf (lfi->file_name, "%s_%d_%s.log", scenario_file, getpid(), lfi->name);
+        sprintf (lfi->file_name, "%s_%ld_%s.log", scenario_file, (long) getpid(), lfi->name);
     }
 
     if (ringbuffer_files > 0) {
@@ -868,13 +867,13 @@ static void rotatef(struct logfile_info* lfi)
         /* We need to rotate away an existing file. */
         if (lfi->nfiles == ringbuffer_files) {
             if ((lfi->ftimes)[0].n) {
-                sprintf(L_rotate_file_name, "%s_%d_%s_%lu.%d.log",
-                        scenario_file, getpid(), lfi->name,
+                sprintf(L_rotate_file_name, "%s_%ld_%s_%lu.%d.log",
+                        scenario_file, (long) getpid(), lfi->name,
                         (unsigned long)(lfi->ftimes)[0].start,
                         (lfi->ftimes)[0].n);
             } else {
-                sprintf(L_rotate_file_name, "%s_%d_%s_%lu.log",
-                        scenario_file, getpid(), lfi->name,
+                sprintf(L_rotate_file_name, "%s_%ld_%s_%lu.log",
+                        scenario_file, (long) getpid(), lfi->name,
                         (unsigned long)(lfi->ftimes)[0].start);
             }
             unlink(L_rotate_file_name);
@@ -889,13 +888,13 @@ static void rotatef(struct logfile_info* lfi)
                 (lfi->ftimes)[lfi->nfiles].n = (lfi->ftimes)[lfi->nfiles - 1].n + 1;
             }
             if ((lfi->ftimes)[lfi->nfiles].n) {
-                sprintf(L_rotate_file_name, "%s_%d_%s_%lu.%d.log",
-                        scenario_file, getpid(), lfi->name,
+                sprintf(L_rotate_file_name, "%s_%ld_%s_%lu.%d.log",
+                        scenario_file, (long) getpid(), lfi->name,
                         (unsigned long)(lfi->ftimes)[lfi->nfiles].start,
                         (lfi->ftimes)[lfi->nfiles].n);
             } else {
-                sprintf(L_rotate_file_name, "%s_%d_%s_%lu.log",
-                        scenario_file, getpid(), lfi->name,
+                sprintf(L_rotate_file_name, "%s_%ld_%s_%lu.log",
+                        scenario_file, (long) getpid(), lfi->name,
                         (unsigned long)(lfi->ftimes)[lfi->nfiles].start);
             }
             lfi->nfiles++;
@@ -952,84 +951,73 @@ void rotate_errorf()
     strcpy(screen_logfile, error_lfi.file_name);
 }
 
+static int _trace(struct logfile_info* lfi, const char* fmt, va_list ap)
+{
+    int ret = 0;
+    if(lfi->fptr) {
+        ret = vfprintf(lfi->fptr, fmt, ap);
+        fflush(lfi->fptr);
 
-/*#ifdef __cplusplus
-extern "C" {
-#endif
- * w
-*/
-    static int _trace(struct logfile_info* lfi, const char* fmt, va_list ap)
-    {
-        int ret = 0;
-        if(lfi->fptr) {
-            ret = vfprintf(lfi->fptr, fmt, ap);
-            fflush(lfi->fptr);
+        lfi->count += ret;
 
-            lfi->count += ret;
-
-            if (max_log_size && lfi->count > max_log_size) {
-                fclose(lfi->fptr);
-                lfi->fptr = NULL;
-            }
-
-            if (ringbuffer_size && lfi->count > ringbuffer_size) {
-                rotatef(lfi);
-                lfi->count = 0;
-            }
+        if (max_log_size && lfi->count > max_log_size) {
+            fclose(lfi->fptr);
+            lfi->fptr = NULL;
         }
-        return ret;
+
+        if (ringbuffer_size && lfi->count > ringbuffer_size) {
+            rotatef(lfi);
+            lfi->count = 0;
+        }
     }
-
-
-    int TRACE_MSG(const char *fmt, ...)
-    {
-        int ret;
-        va_list ap;
-
-        va_start(ap, fmt);
-        ret = _trace(&message_lfi, fmt, ap);
-        va_end(ap);
-
-        return ret;
-    }
-
-    int TRACE_SHORTMSG(const char *fmt, ...)
-    {
-        int ret;
-        va_list ap;
-
-        va_start(ap, fmt);
-        ret = _trace(&shortmessage_lfi, fmt, ap);
-        va_end(ap);
-
-        return ret;
-    }
-
-    int LOG_MSG(const char *fmt, ...)
-    {
-        int ret;
-        va_list ap;
-
-        va_start(ap, fmt);
-        ret = _trace(&log_lfi, fmt, ap);
-        va_end(ap);
-
-        return ret;
-    }
-
-    int TRACE_CALLDEBUG(const char *fmt, ...)
-    {
-        int ret;
-        va_list ap;
-
-        va_start(ap, fmt);
-        ret = _trace(&calldebug_lfi, fmt, ap);
-        va_end(ap);
-
-        return ret;
-    }
-/*
-#ifdef __cplusplus
+    return ret;
 }
-#endif
-*/
+
+
+int TRACE_MSG(const char *fmt, ...)
+{
+    int ret;
+    va_list ap;
+
+    va_start(ap, fmt);
+    ret = _trace(&message_lfi, fmt, ap);
+    va_end(ap);
+
+    return ret;
+}
+
+int TRACE_SHORTMSG(const char *fmt, ...)
+{
+    int ret;
+    va_list ap;
+
+    va_start(ap, fmt);
+    ret = _trace(&shortmessage_lfi, fmt, ap);
+    va_end(ap);
+
+    return ret;
+}
+
+int LOG_MSG(const char *fmt, ...)
+{
+    int ret;
+    va_list ap;
+
+    va_start(ap, fmt);
+    ret = _trace(&log_lfi, fmt, ap);
+    va_end(ap);
+
+    return ret;
+}
+
+int TRACE_CALLDEBUG(const char *fmt, ...)
+{
+    int ret;
+    va_list ap;
+
+    va_start(ap, fmt);
+    ret = _trace(&calldebug_lfi, fmt, ap);
+    va_end(ap);
+
+    return ret;
+}
