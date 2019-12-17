@@ -44,6 +44,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "config.h"
 #include "sipp.hpp"
 #include "socket.hpp"
 #include "logger.hpp"
@@ -590,7 +591,6 @@ void handle_stdin_socket()
                 }
                 command_buffer[0] = '\0';
                 command_mode = 0;
-                printf(SIPP_ENDL);
             }
 #ifndef __SUNOS
             else if (c == key_backspace || c == key_dc)
@@ -628,8 +628,6 @@ void handle_stdin_socket()
                 return;
             }
             command_buffer[0] = '\0';
-            printf("Command: ");
-            fflush(stdout);
         } else {
             process_key(c);
         }
@@ -2397,12 +2395,16 @@ int open_connections()
 
             /* Resolving local IP */
             if ((ret = getaddrinfo(local_ip, NULL, &hints, &local_addr)) != 0) {
-                if (ret == EAI_ADDRFAMILY) {
+              switch (ret) {
+#ifdef EAI_ADDRFAMILY
+                case EAI_ADDRFAMILY:
                     ERROR("Network family mismatch for local and remote IP");
-                } else {
+                    break;
+#endif
+                default:
                     ERROR("Can't get local IP address in getaddrinfo, "
                           "local_ip='%s', ret=%d", local_ip, ret);
-                }
+              }
             }
             memcpy(&local_sockaddr, local_addr->ai_addr, local_addr->ai_addrlen);
             freeaddrinfo(local_addr);

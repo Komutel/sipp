@@ -50,6 +50,14 @@
 #include "defines.h"
 #include "send_packets.h"
 #include "prepare_pcap.h"
+#include "config.h"
+
+#ifndef HAVE_UDP_UH_PREFIX
+#define uh_ulen len
+#define uh_sum check
+#define uh_sport source
+#define uh_dport dest
+#endif
 
 extern char* scenario_path;
 extern volatile unsigned long rtp_pckts_pcap;
@@ -175,6 +183,7 @@ void send_packets(play_args_t* play_args)
     /* to and from are pointers in case play_args (call sticky) gets modified! */
     struct sockaddr_storage *to = &(play_args->to);
     struct sockaddr_storage *from = &(play_args->from);
+    struct sockaddr_storage bind_addr = {0};
     struct udphdr *udp;
     struct sockaddr_in6 to6, from6;
     char buffer[PCAP_MAXPACKET];
@@ -205,8 +214,22 @@ void send_packets(play_args_t* play_args)
         }
     }
 
-    if ((ret = bind(sock, (struct sockaddr *)from, len))) {
-        ERROR("Can't bind media raw socket");
+    // When binding a raw socket, it doesn't make sense to bind to a particular
+    // port, as that's a UDP/TCP concept but the point of a raw socket is that
+    // we're writing the headers ourselves. Some systems (like FreeBSD) are
+    // strict about this and return EADDRNOTAVAIL if we specify a port, so bind
+    // to a sockaddr structure copied from our sending address but with the
+    // port set to 0.
+    if (media_ip_is_ipv6) {
+        memcpy(&bind_addr, from, sizeof(struct sockaddr_in6));
+        ((struct sockaddr_in6 *)&bind_addr)->sin6_port = 0;
+    } else {
+        memcpy(&bind_addr, from, sizeof(struct sockaddr_in));
+        ((struct sockaddr_in *)&bind_addr)->sin_port = 0;
+    }
+
+    if ((ret = bind(sock, (struct sockaddr *)&bind_addr, len))) {
+        ERROR("Can't bind media raw socket: %s", strerror(errno));
         goto pop2;
     }
 

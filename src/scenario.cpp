@@ -28,6 +28,7 @@
  */
 
 #include <stdlib.h>
+#include "config.h"
 #include "sipp.hpp"
 #ifdef HAVE_GSL
 #include <gsl/gsl_rng.h>
@@ -1088,7 +1089,7 @@ scenario::~scenario()
 
 CSample *parse_distribution(bool oldstyle = false)
 {
-    CSample *distribution = nullptr;
+    CSample *distribution = NULL;
     const char *distname;
     const char *ptr = 0;
 

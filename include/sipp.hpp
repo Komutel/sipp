@@ -21,7 +21,7 @@
 #define __SIPP__
 
 /* Std C includes */
-
+#include "config.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,7 +36,7 @@
 #endif
 #endif
 #include <sys/time.h>
-#include <sys/poll.h>
+#include <poll.h>
 #ifdef HAVE_EPOLL
 #include <sys/epoll.h>
 #endif
@@ -118,7 +118,10 @@
 #define TRANSPORT_TO_STRING(p)     ((p==T_TCP) ? "TCP" : ((p==T_TLS)? "TLS" : ((p==T_UDP)? "UDP" : "SCTP")))
 
 #define SIPP_MAXFDS                65536
-#define SIPP_MAX_MSG_SIZE          65536
+
+#ifndef SIPP_MAX_MSG_SIZE
+#define SIPP_MAX_MSG_SIZE 65536
+#endif
 
 #define MSG_RETRANS_FIRST          0
 #define MSG_RETRANS_RETRANSMISSION 1
@@ -281,7 +284,6 @@ MAYBE_EXTERN bool               twinSippMode            DEFVAL(false);
 MAYBE_EXTERN bool               extendedTwinSippMode    DEFVAL(false);
 
 MAYBE_EXTERN bool               nostdin                 DEFVAL(false);
-MAYBE_EXTERN bool               use_curses              DEFVAL(true);
 MAYBE_EXTERN bool               backgroundMode          DEFVAL(false);
 MAYBE_EXTERN bool               signalDump              DEFVAL(false);
 

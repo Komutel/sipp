@@ -15,9 +15,7 @@
  *
  *  Author : Guillaume TEISSIER from FTR&D 02/02/2006
  */
-#ifdef HAVE_CONFIG_H
 #include "config.h"
-#endif
 
 #include <pcap.h>
 #include <stdlib.h>
@@ -30,6 +28,13 @@
 #include "defines.h"
 #include "endianshim.h"
 #include "prepare_pcap.h"
+
+#ifndef HAVE_UDP_UH_PREFIX
+#define uh_ulen len
+#define uh_sum check
+#define uh_sport source
+#define uh_dport dest
+#endif
 
 /* Helpful RFCs for DTMF generation.
  * https://tools.ietf.org/html/rfc4733
