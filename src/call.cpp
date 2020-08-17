@@ -210,7 +210,8 @@ uint8_t get_remote_ipv6_media(char *msg, struct in6_addr *addr)
 enum media_ptn {
     PAT_AUDIO,
     PAT_IMAGE,
-    PAT_VIDEO
+    PAT_VIDEO,
+    PAT_TEXT
 };
 uint16_t get_remote_port_media(const char *msg, enum media_ptn pattype)
 {
@@ -224,6 +225,8 @@ uint16_t get_remote_port_media(const char *msg, enum media_ptn pattype)
         pattern = "m=image ";
     } else if (pattype == PAT_VIDEO) {
         pattern = "m=video ";
+    } else if (pattype == PAT_TEXT) {
+        pattern = "m=text ";
     } else {
         ERROR("Internal error: Undefined media pattern %d\n", 3);
     }
@@ -258,7 +261,7 @@ uint16_t get_remote_port_media(const char *msg, enum media_ptn pattype)
  */
 void call::get_remote_media_addr(char *msg)
 {
-    uint16_t audio_port, image_port, video_port;
+    uint16_t audio_port, image_port, video_port, text_port;
     if (media_ip_is_ipv6) {
         struct in6_addr ip_media;
         if (get_remote_ipv6_media(msg, &ip_media)) {
@@ -289,6 +292,15 @@ void call::get_remote_media_addr(char *msg)
                 (_RCAST(struct sockaddr_in6 *, &(play_args_v.to)))->sin6_port = htons(video_port);
                 (_RCAST(struct sockaddr_in6 *, &(play_args_v.to)))->sin6_addr = ip_media;
             }
+            text_port = get_remote_port_media(msg, PAT_TEXT);
+            if (text_port) {
+              /* We have text in the SDP: set the to_text addr */
+              (_RCAST(struct sockaddr_in6*, &(play_args_text.to)))->sin6_flowinfo = 0;
+              (_RCAST(struct sockaddr_in6*, &(play_args_text.to)))->sin6_scope_id = 0;
+              (_RCAST(struct sockaddr_in6*, &(play_args_text.to)))->sin6_family = AF_INET6;
+              (_RCAST(struct sockaddr_in6*, &(play_args_text.to)))->sin6_port = htons(text_port);
+              (_RCAST(struct sockaddr_in6*, &(play_args_text.to)))->sin6_addr = ip_media;
+            }
             hasMediaInformation = 1;
         }
     } else {
@@ -315,6 +327,13 @@ void call::get_remote_media_addr(char *msg)
                 (_RCAST(struct sockaddr_in *, &(play_args_v.to)))->sin_family = AF_INET;
                 (_RCAST(struct sockaddr_in *, &(play_args_v.to)))->sin_port = htons(video_port);
                 (_RCAST(struct sockaddr_in *, &(play_args_v.to)))->sin_addr.s_addr = ip_media;
+            }
+            text_port = get_remote_port_media(msg, PAT_TEXT);
+            if (text_port) {
+              /* We have text in the SDP: set the to_text addr */
+              (_RCAST(struct sockaddr_in*, &(play_args_text.to)))->sin_family = AF_INET;
+              (_RCAST(struct sockaddr_in*, &(play_args_text.to)))->sin_port = htons(text_port);
+              (_RCAST(struct sockaddr_in*, &(play_args_text.to)))->sin_addr.s_addr = ip_media;
             }
             hasMediaInformation = 1;
         }
@@ -658,9 +677,11 @@ void call::init(scenario * call_scenario, struct sipp_socket *socket, struct soc
     memset(&(play_args_a.to), 0, sizeof(struct sockaddr_storage));
     memset(&(play_args_i.to), 0, sizeof(struct sockaddr_storage));
     memset(&(play_args_v.to), 0, sizeof(struct sockaddr_storage));
+    memset(&(play_args_text.to), 0, sizeof(struct sockaddr_storage));
     memset(&(play_args_a.from), 0, sizeof(struct sockaddr_storage));
     memset(&(play_args_i.from), 0, sizeof(struct sockaddr_storage));
     memset(&(play_args_v.from), 0, sizeof(struct sockaddr_storage));
+    memset(&(play_args_text.from), 0, sizeof(struct sockaddr_storage));
     hasMediaInformation = 0;
     media_thread = 0;
 #endif
@@ -2188,8 +2209,10 @@ char* call::createSendingMessage(SendingMessage *src, int P_index, char *msg_buf
                 play_args = &play_args_i;
             } else if (strstr(begin, "video")) {
                 play_args = &play_args_v;
+            } else if (strstr(begin, "text")) {
+                play_args = &play_args_text;
             } else {
-                ERROR("media_port keyword with no audio or video on the current line (%s)", begin);
+                ERROR("media_port keyword with no audio or video or image or text on the current line (%s)", begin);
             }
             if (media_ip_is_ipv6) {
                 (_RCAST(struct sockaddr_in6 *, &(play_args->from)))->sin6_port = htons(port);
@@ -3868,7 +3891,8 @@ call::T_ActionResult call::executeAction(char * msg, message *curmsg)
 #ifdef PCAPPLAY
         } else if ((currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_AUDIO) ||
                    (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_IMAGE) ||
-                   (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_VIDEO)) {
+                   (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_VIDEO) ||
+                   (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_TEXT)) {
             play_args_t *play_args;
             if (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_AUDIO) {
                 play_args = &(this->play_args_a);
@@ -3876,6 +3900,8 @@ call::T_ActionResult call::executeAction(char * msg, message *curmsg)
                 play_args = &(this->play_args_i);
             } else if (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_VIDEO) {
                 play_args = &(this->play_args_v);
+            } else if (currentAction->getActionType() == CAction::E_AT_PLAY_PCAP_TEXT) {
+                play_args = &(this->play_args_text);
             } else {
                 ERROR("Can't find pcap data to play");
             }
